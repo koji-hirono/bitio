@@ -111,25 +111,25 @@ func encodeLength(w *bitio.Writer, L, lb uint64, ub *uint64, aligned bool) uint6
 	}
 
 	switch {
-	case L >= 4 * 16 * 1024:
+	case L >= 4*16*1024:
 		// 1100 0100
 		w.WriteByte(0b1100_0100)
-		return L - 4 * 16 * 1024
-	case L >= 3 * 16 * 1024:
+		return L - 4*16*1024
+	case L >= 3*16*1024:
 		// 1100 0011
 		w.WriteByte(0b1100_0011)
-		return L - 3 * 16 * 1024
-	case L >= 2 * 16 * 1024:
+		return L - 3*16*1024
+	case L >= 2*16*1024:
 		// 1100 0010
 		w.WriteByte(0b1100_0010)
-		return L - 2 * 16 * 1024
-	case L >= 1 * 16 * 1024:
+		return L - 2*16*1024
+	case L >= 1*16*1024:
 		// 1100 0001
 		w.WriteByte(0b1100_0001)
-		return L - 1 * 16 * 1024
+		return L - 1*16*1024
 	case L >= 128:
 		// 10LL LLLL LLLL LLLL
-		w.WriteByte(byte(L >> 8) | 1 << 7)
+		w.WriteByte(byte(L>>8) | 1<<7)
 		w.WriteByte(byte(L))
 		return 0
 	default:
@@ -138,7 +138,6 @@ func encodeLength(w *bitio.Writer, L, lb uint64, ub *uint64, aligned bool) uint6
 		return 0
 	}
 }
-
 
 // 13 Encoding the integer type
 func encodeInteger(w *bitio.Writer, n int64, lb *int64, ub *int64, ext, aligned bool) {
@@ -177,7 +176,7 @@ func encodeBitString(w *bitio.Writer, p []byte, n, lb uint64, ub *uint64, ext, a
 			w.WriteBits(p, int(*ub))
 			return
 		}
-		if n < 64 * 1024 {
+		if n < 64*1024 {
 			w.WriteBits(p, int(n))
 			if aligned {
 				w.Flush()
