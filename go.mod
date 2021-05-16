@@ -1,4 +1,4 @@
-module github.com/koji-hirono/bitio
+module github.com/koji-hirono/bitio/v2
 
 go 1.15
 
