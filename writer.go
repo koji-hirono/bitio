@@ -1,115 +1,108 @@
 package bitio
 
 import (
-	"io"
+	"github.com/koji-hirono/memio"
 )
 
 // A Writer provides sequential bit-level writing.
 type Writer struct {
-	w   io.Writer
-	buf byte
-	n   int
+	g memio.Grower
+	n int
 }
 
-// NewWriter returns a new Writer that writes to w.
-func NewWriter(w io.Writer) *Writer {
-	return &Writer{w: w}
+// NewWriter returns a new Writer
+func NewWriter(g memio.Grower) *Writer {
+	return &Writer{g: g}
 }
 
-// Flush expands any buffered data to a single byte,
-// and writes to the underlying io.Writer.
-func (w *Writer) Flush() error {
-	if w.n == 0 {
-		return nil
-	}
-	_, err := w.w.Write([]byte{w.buf})
-	if err != nil {
-		return err
-	}
-	w.buf = 0
-	w.n = 0
-	return nil
+func (w *Writer) Bytes() []byte {
+	return w.g.Bytes()
 }
 
-// Write writes len(p) bytes to the underlying io.Writer.
+func (w *Writer) Align() {
+	w.n = (w.n + 7) &^ 0x7
+}
+
+func (w *Writer) Grow(nbits int) (err error) {
+	nbytes := (nbits + 7) >> 3
+	return w.g.Grow(nbytes)
+}
+
 func (w *Writer) Write(p []byte) (int, error) {
-	if w.n == 0 {
-		return w.w.Write(p)
+	m := len(p)
+	n := w.n + m*8
+	err := w.Grow(n)
+	if err != nil {
+		return 0, err
 	}
-	for i, c := range p {
-		x := w.buf | (c >> w.n)
-		_, err := w.w.Write([]byte{x})
-		if err != nil {
-			return i, err
-		}
-		w.buf = c << (8 - w.n)
+	for _, c := range p {
+		w.writebit(c, 8)
 	}
-	return len(p), nil
+	return m, nil
 }
 
 // WriteByte writes a single byte.
 func (w *Writer) WriteByte(c byte) error {
-	if w.n == 0 {
-		_, err := w.w.Write([]byte{c})
-		return err
-	}
-	x := w.buf | (c >> w.n)
-	_, err := w.w.Write([]byte{x})
+	n := w.n + 8
+	err := w.Grow(n)
 	if err != nil {
 		return err
 	}
-	w.buf = c << (8 - w.n)
+	w.writebit(c, 8)
 	return nil
 }
 
 // WriteBool writes the specified boolean value as a single bit.
 func (w *Writer) WriteBool(b bool) error {
-	x := w.buf
-	if b {
-		x |= byte(0x80) >> w.n
+	n := w.n + 1
+	err := w.Grow(n)
+	if err != nil {
+		return err
 	}
-	if w.n+1 < 8 {
-		w.buf = x
-		w.n++
+	if b {
+		w.writebit(0x80, 1)
 	} else {
-		_, err := w.w.Write([]byte{x})
-		if err != nil {
-			return err
-		}
-		w.buf = 0
-		w.n = 0
+		w.writebit(0, 1)
 	}
 	return nil
 }
 
-// WriteBits writes nbits bits to the underlying io.Writer.
-func (w *Writer) WriteBits(p []byte, nbits int) (int, error) {
-	n := 0
-	end := nbits >> 3
-	if end != 0 {
-		nb, err := w.Write(p[:end])
-		if err != nil {
-			return nb << 3, err
-		}
-		n = nb
+// WriteBits writes nbits bits.
+func (w *Writer) WriteBits(p []byte, nbits int) error {
+	n := w.n + nbits
+	err := w.Grow(n)
+	if err != nil {
+		return err
 	}
-
+	i := nbits >> 3
+	for _, c := range p[:i] {
+		w.writebit(c, 8)
+	}
 	off := nbits & 7
-	if off == 0 {
-		return nbits, nil
+	if off != 0 {
+		w.writebit(p[i], off)
 	}
+	return nil
+}
 
-	c := p[end]
-	x := w.buf | (c >> w.n)
-	if w.n+off < 8 {
-		w.buf = x
-	} else {
-		_, err := w.w.Write([]byte{x})
-		if err != nil {
-			return n << 3, err
-		}
-		w.buf = c << (8 - w.n)
+func (w *Writer) WriteBitField(v uint64, nbits int) error {
+	v <<= 64 - nbits
+	nbytes := (nbits + 7) >> 3
+	p := make([]byte, nbytes)
+	for i := 0; i < nbytes; i++ {
+		k := 56 - (i << 3)
+		p[i] = byte(v >> k)
 	}
-	w.n = (w.n + off) & 7
-	return nbits, nil
+	return w.WriteBits(p, nbits)
+}
+
+func (w *Writer) writebit(c byte, nbits int) {
+	buf := w.g.Bytes()
+	i := w.n >> 3
+	off := w.n & 7
+	buf[i] |= c >> off
+	if nbits+off > 8 {
+		buf[i+1] = c << (8 - off)
+	}
+	w.n += nbits
 }

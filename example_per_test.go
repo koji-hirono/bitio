@@ -1,11 +1,11 @@
 package bitio_test
 
 import (
-	"bytes"
 	"fmt"
 	"math/bits"
 
 	"github.com/koji-hirono/bitio"
+	"github.com/koji-hirono/memio"
 )
 
 // ASN.1 Aligned/Unaligned PER
@@ -20,26 +20,17 @@ func encodeConstrainedWholeNumber(w *bitio.Writer, n, lb, ub int64, aligned bool
 	case !aligned || R < 256:
 		// Encoding as a non-negative-binary-integer
 		nbits := bits.Len64(R)
-		nbytes := (nbits + 7) >> 3
-		p := make([]byte, nbytes)
-		bitio.PutBitField(p, x, nbits)
-		w.WriteBits(p, nbits)
+		w.WriteBitField(x, nbits)
 	case R == 256:
-		p := make([]byte, 1)
-		bitio.PutBitField(p, x, 8)
-		w.WriteBits(p, 8)
+		w.WriteBitField(x, 8)
 	case R < 65536:
-		p := make([]byte, 2)
-		bitio.PutBitField(p, x, 16)
-		w.WriteBits(p, 16)
+		w.WriteBitField(x, 16)
 	default:
 		L := (bits.Len64(x) + 7) >> 3
 		encodeLength(w, uint64(L), 0, nil, aligned)
 		// Encoding as a non-negative-binary-integer
 		nbits := L << 3
-		p := make([]byte, L)
-		bitio.PutBitField(p, x, nbits)
-		w.WriteBits(p, nbits)
+		w.WriteBitField(x, nbits)
 	}
 }
 
@@ -47,10 +38,7 @@ func encodeConstrainedWholeNumber(w *bitio.Writer, n, lb, ub int64, aligned bool
 func encodeSmallNonNegativeWholeNumber(w *bitio.Writer, n uint64, aligned bool) {
 	if n < 64 {
 		w.WriteBool(false)
-		nbits := 6
-		p := make([]byte, 1)
-		bitio.PutBitField(p, n, nbits)
-		w.WriteBits(p, nbits)
+		w.WriteBitField(n, 6)
 	} else {
 		w.WriteBool(true)
 		encodeSemiConstrainedWholeNumber(w, int64(n), 0, aligned)
@@ -65,9 +53,7 @@ func encodeSemiConstrainedWholeNumber(w *bitio.Writer, n, lb int64, aligned bool
 
 	// Encoding as a non-negative-binary-integer
 	nbits := L << 3
-	p := make([]byte, L)
-	bitio.PutBitField(p, x, nbits)
-	w.WriteBits(p, nbits)
+	w.WriteBitField(x, nbits)
 }
 
 // 11.8 Encoding of an unconstrained whole number
@@ -81,9 +67,7 @@ func encodeUnconstrainedWholeNumber(w *bitio.Writer, n int64, aligned bool) {
 
 	// Encoding as a 2's-complement-binary-integer
 	nbits := L << 3
-	p := make([]byte, L)
-	bitio.PutBitField(p, x, nbits)
-	w.WriteBits(p, nbits)
+	w.WriteBitField(x, nbits)
 }
 
 // 11.9 General rules for encodinga length determinant
@@ -97,10 +81,7 @@ func encodeLength(w *bitio.Writer, L, lb uint64, ub *uint64, aligned bool) uint6
 			x := L - lb
 			R := *ub - lb + 1
 			nbits := bits.Len64(R)
-			nbytes := (nbits + 7) >> 3
-			p := make([]byte, nbytes)
-			bitio.PutBitField(p, x, nbits)
-			w.WriteBits(p, nbits)
+			w.WriteBitField(x, nbits)
 			return 0
 		}
 	}
@@ -179,7 +160,7 @@ func encodeBitString(w *bitio.Writer, p []byte, n, lb uint64, ub *uint64, ext, a
 		if n < 64*1024 {
 			w.WriteBits(p, int(n))
 			if aligned {
-				w.Flush()
+				w.Align()
 			}
 			return
 		}
@@ -194,20 +175,15 @@ func encodeBitString(w *bitio.Writer, p []byte, n, lb uint64, ub *uint64, ext, a
 // SCellIndex ::= INTEGER (1..31, ...)
 //
 func Example_encodeSCellIndex() {
-	b := bytes.NewBuffer([]byte{})
-	w := bitio.NewWriter(b)
+	g := memio.NewVar([]byte{})
+	w := bitio.NewWriter(g)
 
 	n := int64(23)
 	lb := int64(1)
 	ub := int64(31)
 	encodeInteger(w, n, &lb, &ub, true, true)
 
-	err := w.Flush()
-	if err != nil {
-		fmt.Println("Flush failed:", err)
-	}
-
-	fmt.Printf("%x\n", b.Bytes())
+	fmt.Printf("%x\n", w.Bytes())
 
 	// Output:
 	// 58
@@ -218,8 +194,8 @@ func Example_encodeSCellIndex() {
 // NG-5G-S-TMSI ::= BIT STRING (SIZE (48))
 //
 func Example_encodeNG5GSTMSI() {
-	b := bytes.NewBuffer([]byte{})
-	w := bitio.NewWriter(b)
+	g := memio.NewVar([]byte{})
+	w := bitio.NewWriter(g)
 
 	lb := uint64(48)
 	ub := uint64(48)
@@ -228,12 +204,7 @@ func Example_encodeNG5GSTMSI() {
 
 	encodeBitString(w, p, nbits, lb, &ub, false, false)
 
-	err := w.Flush()
-	if err != nil {
-		fmt.Println("Flush failed:", err)
-	}
-
-	fmt.Printf("%x\n", b.Bytes())
+	fmt.Printf("%x\n", w.Bytes())
 
 	// Output:
 	// 112233445566

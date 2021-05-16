@@ -6,29 +6,24 @@ import (
 
 // A Reader provides sequential bit-level access.
 type Reader struct {
-	r   io.Reader
-	buf byte
+	buf []byte
 	n   int
 }
 
-// NewReader returns a new Reader that reads from r.
-func NewReader(r io.Reader) *Reader {
-	return &Reader{r: r}
+// NewReader returns a new Reader.
+func NewReader(buf []byte) *Reader {
+	return &Reader{buf: buf}
 }
 
-// DiscardBuffer skips any buffered data.
-func (r *Reader) DiscardBuffer() {
-	r.n = 0
-	r.buf = 0
+// Align skips any data
+func (r *Reader) Align() {
+	r.n = (r.n + 7) &^ 7
 }
 
 // Read reads data into p.
 // It returns the number of bytes read into p.
 // To read exactly len(p) bytes, use io.ReadFull(r, p).
 func (r *Reader) Read(p []byte) (int, error) {
-	if r.n == 0 {
-		return r.r.Read(p)
-	}
 	n := len(p)
 	for i := 0; i < n; i++ {
 		c, err := r.ReadByte()
@@ -40,86 +35,80 @@ func (r *Reader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+func (r *Reader) AtomicRead(p []byte) error {
+	m := len(p)
+	n := ((r.n + m*8) + 7) >> 3
+	if n > len(r.buf) {
+		return io.ErrUnexpectedEOF
+	}
+	for i := 0; i < m; i++ {
+		p[i] = r.readbit(8)
+	}
+	return nil
+}
+
 // ReadByte reads and returns a single byte.
 // If no byte is available, returns an error.
 func (r *Reader) ReadByte() (byte, error) {
-	var buf [1]byte
-	_, err := r.r.Read(buf[:])
-	if err != nil {
-		return 0, err
+	n := ((r.n + 8) + 7) >> 3
+	if n > len(r.buf) {
+		return 0, io.EOF
 	}
-	if r.n == 0 {
-		return buf[0], nil
-	}
-	c := r.buf
-	c |= buf[0] >> r.n
-	r.buf = buf[0] << (8 - r.n)
-	return c, nil
+	return r.readbit(8), nil
 }
 
 // ReadBool reads a single bit and returns a boolean value.
 // If a single bit is not available, returns an error.
 func (r *Reader) ReadBool() (bool, error) {
-	var b bool
-	if r.n == 0 {
-		var buf [1]byte
-		n, _ := r.r.Read(buf[:])
-		if n == 0 {
-			return b, io.EOF
-		}
-		r.buf = buf[0]
-		r.n = 8
+	n := ((r.n + 1) + 7) >> 3
+	if n > len(r.buf) {
+		return false, io.ErrUnexpectedEOF
 	}
-
-	if r.buf&0x80 == 0x80 {
-		b = true
-	}
-	r.buf <<= 1
-	r.n--
-	return b, nil
+	return r.readbit(1) == byte(0x80), nil
 }
 
 // ReadBits reads nbits bits.
-func (r *Reader) ReadBits(p []byte, nbits int) (int, error) {
-	var err error
-	end := nbits >> 3
-	if end != 0 {
-		n, e := r.Read(p[:end])
-		if n != end {
-			return n << 3, e
-		}
-		err = e
+func (r *Reader) ReadBits(p []byte, nbits int) error {
+	n := ((r.n + nbits) + 7) >> 3
+	if n > len(r.buf) {
+		return io.ErrUnexpectedEOF
 	}
-
+	m := nbits >> 3
+	for i := 0; i < m; i++ {
+		p[i] = r.readbit(8)
+	}
 	off := nbits & 7
-	if off == 0 {
-		return nbits, err
+	if off != 0 {
+		p[m] = r.readbit(off)
 	}
+	return nil
+}
 
-	p[end] = r.buf
-
-	if off <= r.n {
-		p[end] >>= 8 - off
-		p[end] <<= 8 - off
-		r.buf <<= off
-		r.n -= off
-		return nbits, err
+func (r *Reader) ReadBitField(nbits int) (uint64, error) {
+	nbytes := (nbits + 7) >> 3
+	p := make([]byte, nbytes)
+	err := r.ReadBits(p, nbits)
+	if err != nil {
+		return 0, err
 	}
-
-	n := r.n
-	r.buf = 0
-	r.n = 0
-
-	var buf [1]byte
-	_, e := r.r.Read(buf[:])
-	if e != nil {
-		return end<<3 + n, e
+	v := uint64(0)
+	for i := 0; i < nbytes; i++ {
+		k := 56 - (i << 3)
+		v |= uint64(p[i]) << k
 	}
-	p[end] |= buf[0] >> n
-	p[end] >>= 8 - off
-	p[end] <<= 8 - off
-	r.buf = buf[0] << (off - n)
-	r.n = 8 - off + n
+	v >>= 64 - nbits
+	return v, nil
+}
 
-	return nbits, nil
+func (r *Reader) readbit(nbits int) byte {
+	i := r.n >> 3
+	off := r.n & 7
+	c := r.buf[i] << off
+	if off+nbits > 8 {
+		c |= r.buf[i+1] >> (8 - off)
+	}
+	r.n += nbits
+	mask := ^byte(0) << (8 - nbits)
+	c &= mask
+	return c
 }
