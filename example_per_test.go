@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math/bits"
 
-	"github.com/koji-hirono/bitio"
+	"github.com/koji-hirono/bitio/v2"
 	"github.com/koji-hirono/memio"
 )
 
